@@ -1,0 +1,253 @@
+:root {
+  color: #162326;
+  background: #eef3f4;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button {
+  font: inherit;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  min-height: 100vh;
+}
+
+.viewer {
+  position: relative;
+  min-height: 100vh;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  border-left: 1px solid #ccdadd;
+  background: #f8fbfb;
+  padding: 26px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand svg {
+  color: #087f8c;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 760;
+  letter-spacing: 0;
+}
+
+.brand p,
+.connection p {
+  margin: 4px 0 0;
+  color: #607276;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.connection {
+  display: grid;
+  gap: 18px;
+  justify-items: start;
+}
+
+.connection svg {
+  width: 100%;
+  max-width: 210px;
+  height: auto;
+  border: 1px solid #d9e4e7;
+  border-radius: 8px;
+  background: white;
+}
+
+.label,
+.status span {
+  display: block;
+  color: #6d7e82;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.connection strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 36px;
+  letter-spacing: 0;
+}
+
+.status-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 48px;
+  border: 1px solid #d9e4e7;
+  border-radius: 8px;
+  background: white;
+  padding: 10px 12px;
+}
+
+.status strong {
+  color: #193438;
+  font-size: 14px;
+  font-weight: 760;
+}
+
+.icon-button,
+.primary-action,
+.square-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 44px;
+  border: 1px solid #0f6f7a;
+  border-radius: 8px;
+  background: #087f8c;
+  color: white;
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.icon-button:hover,
+.primary-action:hover,
+.square-button:hover {
+  background: #066b75;
+}
+
+.button-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.square-button {
+  width: 100%;
+  aspect-ratio: 1;
+  min-height: 44px;
+  padding: 0;
+}
+
+.icon-button.secondary {
+  border-color: #b9c9ce;
+  background: #ffffff;
+  color: #193438;
+}
+
+.icon-button.secondary:hover {
+  background: #eef3f4;
+}
+
+.icon-button:disabled,
+.primary-action:disabled,
+.square-button:disabled {
+  border-color: #c9d4d7;
+  background: #dfe8ea;
+  color: #7a8a8e;
+  cursor: not-allowed;
+}
+
+.controller {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 18px;
+  background: #eaf0f1;
+}
+
+.controller-card {
+  display: grid;
+  width: min(100%, 420px);
+  gap: 22px;
+  border: 1px solid #ccdadd;
+  border-radius: 8px;
+  background: #f8fbfb;
+  padding: 22px;
+}
+
+.controller-brand {
+  justify-content: center;
+  text-align: center;
+}
+
+.primary-action {
+  width: 100%;
+}
+
+.phone-tilt {
+  position: relative;
+  display: grid;
+  min-height: 210px;
+  place-items: center;
+  border: 1px solid #d9e4e7;
+  border-radius: 8px;
+  background:
+    linear-gradient(#d9e4e7 1px, transparent 1px),
+    linear-gradient(90deg, #d9e4e7 1px, transparent 1px),
+    #ffffff;
+  background-size: 50% 50%;
+  perspective: 700px;
+  color: #087f8c;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+}
+
+.phone-tilt > div {
+  transition: transform 90ms linear;
+  transform-style: preserve-3d;
+}
+
+.touch-dot {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border: 3px solid white;
+  border-radius: 999px;
+  background: #087f8c;
+  box-shadow: 0 4px 16px rgba(8, 127, 140, 0.35);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+@media (max-width: 860px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .viewer {
+    min-height: 62vh;
+  }
+
+  .panel {
+    border-left: 0;
+    border-top: 1px solid #ccdadd;
+  }
+}

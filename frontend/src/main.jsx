@@ -1,0 +1,660 @@
+import React, { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { createRoot } from "react-dom/client";
+import { Canvas, useFrame, useLoader } from "@react-three/fiber";
+import { ContactShadows, Environment, Grid, OrbitControls, Text } from "@react-three/drei";
+import { Activity, Crosshair, FlipHorizontal, Gamepad2, MonitorSmartphone, RotateCcw, RotateCw, Smartphone } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
+import { Euler, Quaternion } from "three";
+import { STLLoader } from "three/addons/loaders/STLLoader.js";
+import "./styles.css";
+
+const WS_SCHEME = window.location.protocol === "https:" ? "wss" : "ws";
+const API_HOST = import.meta.env.VITE_API_HOST || window.location.host;
+const NEUTRAL_POSE = {
+  quaternion: { x: 0, y: 0, z: 0, w: 1 },
+  position: { x: 0, y: 0, z: 0 },
+};
+const DEFAULT_MODEL_ALIGNMENT = { x: 0, y: 0, z: Math.PI };
+const MODEL_ALIGNMENT_STORAGE_KEY = "ultrasound-model-alignment";
+const DEVICE_SCREEN_CORRECTION = new Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
+const PITCH_DIRECTION = -1;
+const TRACK_DEVICE_TWIST = false;
+
+function websocketUrl(room) {
+  return `${WS_SCHEME}://${API_HOST}/ws/joystick/${room}/`;
+}
+
+function createRoom() {
+  return Math.random().toString(36).slice(2, 8).toUpperCase();
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function degreesToRadians(value) {
+  return (value * Math.PI) / 180;
+}
+
+function normalizeRadians(value) {
+  return ((((value % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+}
+
+function angleDegrees(value) {
+  const degrees = Math.round((normalizeRadians(value) * 180) / Math.PI);
+  return degrees === -180 ? 180 : degrees;
+}
+
+function loadModelAlignment() {
+  try {
+    const value = window.localStorage.getItem(MODEL_ALIGNMENT_STORAGE_KEY);
+    return value ? JSON.parse(value) : DEFAULT_MODEL_ALIGNMENT;
+  } catch (_error) {
+    return DEFAULT_MODEL_ALIGNMENT;
+  }
+}
+
+function saveModelAlignment(alignment) {
+  try {
+    window.localStorage.setItem(MODEL_ALIGNMENT_STORAGE_KEY, JSON.stringify(alignment));
+  } catch (_error) {
+    return;
+  }
+}
+
+function readMotion(message) {
+  const motion = {
+    alpha: Number(message.alpha || 0),
+    beta: Number(message.beta || 0),
+    gamma: Number(message.gamma || 0),
+  };
+
+  motion.quaternion = quaternionFromMotion(motion);
+  return motion;
+}
+
+function quaternionFromMotion(motion) {
+  const euler = new Euler(
+    degreesToRadians(motion.beta * PITCH_DIRECTION),
+    TRACK_DEVICE_TWIST ? degreesToRadians(motion.alpha) : 0,
+    -degreesToRadians(motion.gamma),
+    "YXZ"
+  );
+  return new Quaternion().setFromEuler(euler).multiply(DEVICE_SCREEN_CORRECTION).normalize();
+}
+
+function poseFromCalibratedMotion(motion, calibration) {
+  const current = motion.quaternion;
+  const origin = calibration.quaternion;
+  const relative = origin.clone().invert().multiply(current).normalize();
+
+  return {
+    quaternion: {
+      x: relative.x,
+      y: relative.y,
+      z: relative.z,
+      w: relative.w,
+    },
+    position: NEUTRAL_POSE.position,
+  };
+}
+
+async function readPermission(name) {
+  if (!navigator.permissions?.query) {
+    return "sin api";
+  }
+
+  try {
+    const result = await navigator.permissions.query({ name });
+    return result.state;
+  } catch (_error) {
+    return "no soportado";
+  }
+}
+
+function useJoystickSocket(room, onMessage) {
+  const [status, setStatus] = useState("connecting");
+  const socketRef = useRef(null);
+  const onMessageRef = useRef(onMessage);
+
+  useEffect(() => {
+    onMessageRef.current = onMessage;
+  }, [onMessage]);
+
+  useEffect(() => {
+    setStatus("connecting");
+    const socket = new WebSocket(websocketUrl(room));
+    socketRef.current = socket;
+
+    socket.onopen = () => setStatus("connected");
+    socket.onclose = () => setStatus("closed");
+    socket.onerror = () => setStatus("error");
+    socket.onmessage = (event) => {
+      try {
+        onMessageRef.current(JSON.parse(event.data));
+      } catch (_error) {
+        setStatus("error");
+      }
+    };
+
+    return () => socket.close();
+  }, [room]);
+
+  const send = useCallback((payload) => {
+    const socket = socketRef.current;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify(payload));
+    }
+  }, []);
+
+  return { status, send };
+}
+
+function ProceduralProbe() {
+  return (
+    <group rotation={[0, 0, 0]}>
+      <mesh castShadow position={[0, 0.72, 0]}>
+        <boxGeometry args={[0.92, 1.25, 0.62, 14, 18, 10]} />
+        <meshStandardMaterial color="#d9e2e7" metalness={0.18} roughness={0.34} wireframe />
+      </mesh>
+      <mesh castShadow position={[0, -0.12, 0]}>
+        <cylinderGeometry args={[0.54, 0.76, 0.72, 36, 8]} />
+        <meshStandardMaterial color="#f2f5f6" metalness={0.08} roughness={0.4} wireframe />
+      </mesh>
+      <mesh castShadow position={[0, -0.58, 0]}>
+        <cylinderGeometry args={[0.7, 0.82, 0.22, 40, 5]} />
+        <meshStandardMaterial color="#9bd4df" metalness={0.05} roughness={0.28} wireframe />
+      </mesh>
+      <mesh position={[0, -0.71, 0]}>
+        <boxGeometry args={[1.15, 0.035, 0.78, 18, 2, 12]} />
+        <meshStandardMaterial color="#37a6ba" metalness={0.08} roughness={0.22} />
+      </mesh>
+    </group>
+  );
+}
+
+function StlProbe() {
+  const geometry = useLoader(STLLoader, "/models/transducer.stl");
+  geometry.center();
+
+  return (
+    <mesh geometry={geometry} castShadow rotation={[0, 0, 0]} scale={0.018}>
+      <meshStandardMaterial color="#B2FFFF" metalness={0.08} roughness={0.42} />
+    </mesh>
+  );
+}
+
+function Probe({ pose, hasStl, modelAlignment }) {
+  const group = useRef(null);
+  const targetQuaternion = useRef(new Quaternion());
+
+  useFrame((_state, delta) => {
+    if (!group.current) return;
+    targetQuaternion.current.set(pose.quaternion.x, pose.quaternion.y, pose.quaternion.z, pose.quaternion.w);
+    group.current.quaternion.slerp(targetQuaternion.current, Math.min(1, delta * 9));
+    group.current.position.x = 0;
+    group.current.position.y = 0;
+    group.current.position.z = 0;
+  });
+
+  return (
+    <group ref={group}>
+      <group rotation={[modelAlignment.x, modelAlignment.y, modelAlignment.z]}>
+        <Suspense fallback={<ProceduralProbe />}>{hasStl ? <StlProbe /> : <ProceduralProbe />}</Suspense>
+      </group>
+    </group>
+  );
+}
+
+function FloorLabel({ children, color, position }) {
+  return (
+    <Text
+      color={color}
+      fontSize={0.16}
+      fontWeight={800}
+      letterSpacing={0}
+      position={position}
+      rotation={[-Math.PI / 2, 0, 0]}
+      textAlign="center"
+    >
+      {children}
+    </Text>
+  );
+}
+
+function ReferenceArrow({ color, direction, label, labelPosition }) {
+  const rotation = direction === "front" ? [Math.PI / 2, 0, 0] : [0, 0, Math.PI / 2];
+  const shaftPosition = direction === "front" ? [0, -1.01, 1.55] : [-1.55, -1.01, 0];
+  const headPosition = direction === "front" ? [0, -1.01, 2.28] : [-2.28, -1.01, 0];
+
+  return (
+    <group>
+      <mesh position={shaftPosition} rotation={rotation}>
+        <cylinderGeometry args={[0.025, 0.025, 1.35, 24]} />
+        <meshStandardMaterial color={color} roughness={0.35} />
+      </mesh>
+      <mesh position={headPosition} rotation={rotation}>
+        <coneGeometry args={[0.11, 0.32, 28]} />
+        <meshStandardMaterial color={color} roughness={0.3} />
+      </mesh>
+      <FloorLabel color={color} position={labelPosition}>
+        {label}
+      </FloorLabel>
+    </group>
+  );
+}
+
+function ReferenceAnchors() {
+  return (
+    <group>
+      <mesh position={[0, -1.0, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[0.86, 0.014, 12, 96]} />
+        <meshStandardMaterial color="#193438" roughness={0.45} />
+      </mesh>
+      <mesh position={[0, -0.995, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.13, 0.18, 40]} />
+        <meshStandardMaterial color="#193438" roughness={0.45} />
+      </mesh>
+      <ReferenceArrow color="#0c8f6f" direction="front" label="FRENTE" labelPosition={[0, -0.99, 2.72]} />
+      <ReferenceArrow color="#2563eb" direction="left" label="BOTON IZQ" labelPosition={[-2.82, -0.99, 0]} />
+      <FloorLabel color="#193438" position={[0, -0.99, -0.96]}>
+        PUNTO FIJO
+      </FloorLabel>
+    </group>
+  );
+}
+
+function Scene({ pose, hasStl, modelAlignment }) {
+  return (
+    <Canvas camera={{ position: [3.2, 2.4, 4.2], fov: 44 }} shadows>
+      <color attach="background" args={["#eef3f4"]} />
+      <ambientLight intensity={0.75} />
+      <directionalLight position={[4, 5, 3]} intensity={1.8} castShadow />
+      <ReferenceAnchors />
+      <Probe pose={pose} hasStl={hasStl} modelAlignment={modelAlignment} />
+      <Grid args={[7, 7]} position={[0, -1.05, 0]} cellColor="#b9c9ce" sectionColor="#6f8f99" fadeDistance={14} />
+      <ContactShadows position={[0, -1.02, 0]} opacity={0.28} blur={2.4} />
+      <Environment preset="city" />
+      <OrbitControls makeDefault enablePan={false} minDistance={2.4} maxDistance={8} />
+    </Canvas>
+  );
+}
+
+function DesktopApp() {
+  const [room, setRoom] = useState(createRoom);
+  const [pose, setPose] = useState(NEUTRAL_POSE);
+  const [lastMotionAt, setLastMotionAt] = useState(null);
+  const [latestMotion, setLatestMotion] = useState(null);
+  const [calibration, setCalibration] = useState(null);
+  const [calibratedAt, setCalibratedAt] = useState(null);
+  const [modelAlignment, setModelAlignment] = useState(loadModelAlignment);
+  const [hasStl, setHasStl] = useState(false);
+  const phoneUrl = `${window.location.origin}/controller/${room}`;
+
+  useEffect(() => {
+    fetch("/models/transducer.stl", { method: "HEAD" })
+      .then((response) => setHasStl(response.ok))
+      .catch(() => setHasStl(false));
+  }, []);
+
+  const handleMessage = useCallback(
+    (message) => {
+      if (message.type !== "motion") return;
+
+      const motion = readMotion(message);
+      setLatestMotion(motion);
+      setLastMotionAt(new Date());
+
+      if (calibration) {
+        setPose(poseFromCalibratedMotion(motion, calibration));
+      }
+    },
+    [calibration]
+  );
+
+  const { status } = useJoystickSocket(room, handleMessage);
+  const calibrate = () => {
+    if (!latestMotion) return;
+
+    setCalibration(latestMotion);
+    setCalibratedAt(new Date());
+    setPose(NEUTRAL_POSE);
+  };
+  const changeRoom = () => {
+    setRoom(createRoom());
+    setCalibration(null);
+    setCalibratedAt(null);
+    setLatestMotion(null);
+    setLastMotionAt(null);
+    setPose(NEUTRAL_POSE);
+  };
+  const updateModelAlignment = (changes) => {
+    setModelAlignment((current) => {
+      const next = {
+        x: normalizeRadians(current.x + (changes.x || 0)),
+        y: normalizeRadians(current.y + (changes.y || 0)),
+        z: normalizeRadians(current.z + (changes.z || 0)),
+      };
+      saveModelAlignment(next);
+      return next;
+    });
+  };
+  const resetModelAlignment = () => {
+    setModelAlignment(DEFAULT_MODEL_ALIGNMENT);
+    saveModelAlignment(DEFAULT_MODEL_ALIGNMENT);
+  };
+
+  return (
+    <main className="shell">
+      <section className="viewer">
+        <Scene pose={pose} hasStl={hasStl} modelAlignment={modelAlignment} />
+      </section>
+      <aside className="panel">
+        <div className="brand">
+          <Activity size={22} />
+          <div>
+            <h1>Ultrasound Joystick</h1>
+            <p>Vista 3D del transductor</p>
+          </div>
+        </div>
+
+        <div className="connection">
+          <QRCodeSVG value={phoneUrl} size={178} level="M" includeMargin />
+          <div>
+            <span className="label">Sala</span>
+            <strong>{room}</strong>
+            <p>Control móvil</p>
+          </div>
+        </div>
+
+        <div className="status-grid">
+          <Status label="WebSocket" value={status} />
+          <Status label="Modelo" value={hasStl ? "STL" : "procedural"} />
+          <Status label="Calibración" value={calibration ? "calibrado" : "pendiente"} />
+          <Status label="Movimiento" value="pitch/roll" />
+          <Status label="Frente" value="flecha verde" />
+          <Status label="Botón" value="flecha azul" />
+          <Status label="Alineación" value={`Z ${angleDegrees(modelAlignment.z)}°`} />
+          <Status label="Último dato" value={lastMotionAt ? lastMotionAt.toLocaleTimeString() : "sin señal"} />
+          <Status label="Referencia" value={calibratedAt ? calibratedAt.toLocaleTimeString() : "sin calibrar"} />
+        </div>
+
+        <div className="button-row">
+          <button
+            aria-label="Girar modelo a la izquierda"
+            className="square-button"
+            title="Girar modelo a la izquierda"
+            type="button"
+            onClick={() => updateModelAlignment({ z: -Math.PI / 2 })}
+          >
+            <RotateCcw size={18} />
+          </button>
+          <button
+            aria-label="Girar modelo a la derecha"
+            className="square-button"
+            title="Girar modelo a la derecha"
+            type="button"
+            onClick={() => updateModelAlignment({ z: Math.PI / 2 })}
+          >
+            <RotateCw size={18} />
+          </button>
+          <button
+            aria-label="Invertir frente del modelo"
+            className="square-button"
+            title="Invertir frente del modelo"
+            type="button"
+            onClick={() => updateModelAlignment({ y: Math.PI })}
+          >
+            <FlipHorizontal size={18} />
+          </button>
+        </div>
+
+        <button className="icon-button secondary" type="button" onClick={resetModelAlignment}>
+          <Crosshair size={18} />
+          Alineación base
+        </button>
+
+        <button className="icon-button" type="button" onClick={calibrate} disabled={!latestMotion}>
+          <Crosshair size={18} />
+          {calibration ? "Recalibrar" : "Calibrar"}
+        </button>
+
+        <button className="icon-button secondary" type="button" onClick={changeRoom}>
+          <RotateCcw size={18} />
+          Nueva sala
+        </button>
+      </aside>
+    </main>
+  );
+}
+
+function Status({ label, value }) {
+  return (
+    <div className="status">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function ControllerApp({ room }) {
+  const [permission, setPermission] = useState("idle");
+  const [motion, setMotion] = useState({ beta: 0, gamma: 0, alpha: 0 });
+  const [controlMode, setControlMode] = useState("sensor");
+  const [sensorSource, setSensorSource] = useState("sin eventos");
+  const [sensorSupport, setSensorSupport] = useState({
+    orientation: "checking",
+    motion: "checking",
+    accelerometer: "checking",
+    gyroscope: "checking",
+  });
+  const [eventCount, setEventCount] = useState(0);
+  const [lastSensorAt, setLastSensorAt] = useState(null);
+  const [touchActive, setTouchActive] = useState(false);
+  const eventCountRef = useRef(0);
+  const hasOrientationRef = useRef(false);
+  const { status, send } = useJoystickSocket(room, () => {});
+
+  useEffect(() => {
+    Promise.all([readPermission("accelerometer"), readPermission("gyroscope")]).then(
+      ([accelerometer, gyroscope]) => {
+        setSensorSupport({
+          orientation: typeof DeviceOrientationEvent === "undefined" ? "no" : "si",
+          motion: typeof DeviceMotionEvent === "undefined" ? "no" : "si",
+          accelerometer,
+          gyroscope,
+        });
+      }
+    );
+  }, []);
+
+  const start = async () => {
+    eventCountRef.current = 0;
+    hasOrientationRef.current = false;
+    setEventCount(0);
+    setSensorSource("sin eventos");
+
+    if (
+      typeof DeviceOrientationEvent !== "undefined" &&
+      typeof DeviceOrientationEvent.requestPermission === "function"
+    ) {
+      const result = await DeviceOrientationEvent.requestPermission();
+      if (result !== "granted") {
+        setPermission("denied");
+        return;
+      }
+    }
+
+    setPermission("waiting");
+    window.setTimeout(() => {
+      if (eventCountRef.current === 0) {
+        setPermission("no events");
+      }
+    }, 1800);
+  };
+
+  const sendSensorMotion = (next, source) => {
+    setControlMode("sensor");
+    setSensorSource(source);
+    setMotion(next);
+    eventCountRef.current += 1;
+    setEventCount(eventCountRef.current);
+    setLastSensorAt(new Date());
+    setPermission("active");
+    send(next);
+  };
+
+  const sendTouchMotion = (event) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const x = clamp((event.clientX - bounds.left) / bounds.width, 0, 1);
+    const y = clamp((event.clientY - bounds.top) / bounds.height, 0, 1);
+    const gamma = (x - 0.5) * 90;
+    const beta = (0.5 - y) * 110;
+    const next = {
+      type: "motion",
+      alpha: 0,
+      beta,
+      gamma,
+    };
+
+    setControlMode("touch");
+    setMotion(next);
+    setLastSensorAt(new Date());
+    send(next);
+  };
+
+  const resetTouchMotion = () => {
+    setTouchActive(false);
+    const next = {
+      type: "motion",
+      alpha: 0,
+      beta: 0,
+      gamma: 0,
+    };
+    setMotion(next);
+    send(next);
+  };
+
+  useEffect(() => {
+    if (!["waiting", "active", "no events"].includes(permission)) return undefined;
+
+    const handleOrientation = (event) => {
+      const next = {
+        type: "motion",
+        alpha: event.alpha || 0,
+        beta: event.beta || 0,
+        gamma: event.gamma || 0,
+      };
+      hasOrientationRef.current = true;
+      sendSensorMotion(next, "orientation");
+    };
+    const handleMotion = (event) => {
+      if (hasOrientationRef.current) return;
+
+      const acceleration = {
+        x: event.accelerationIncludingGravity?.x || 0,
+        y: event.accelerationIncludingGravity?.y || 0,
+        z: event.accelerationIncludingGravity?.z || 0,
+      };
+
+      if (acceleration.x || acceleration.y || acceleration.z) {
+        const beta = clamp((Math.atan2(acceleration.y, acceleration.z) * 180) / Math.PI, -90, 90);
+        const gamma = clamp((Math.atan2(acceleration.x, acceleration.z) * 180) / Math.PI, -90, 90);
+        sendSensorMotion(
+          {
+            type: "motion",
+            alpha: motion.alpha || 0,
+            beta,
+            gamma,
+          },
+          "motion"
+        );
+      }
+    };
+
+    window.addEventListener("deviceorientation", handleOrientation);
+    window.addEventListener("devicemotion", handleMotion);
+
+    return () => {
+      window.removeEventListener("deviceorientation", handleOrientation);
+      window.removeEventListener("devicemotion", handleMotion);
+    };
+  }, [permission, send, motion.alpha]);
+
+  return (
+    <main className="controller">
+      <section className="controller-card">
+        <div className="brand controller-brand">
+          <Smartphone size={24} />
+          <div>
+            <h1>Joystick</h1>
+            <p>Sala {room}</p>
+          </div>
+        </div>
+
+        <button className="primary-action" type="button" onClick={start}>
+          <Gamepad2 size={20} />
+          Activar sensores
+        </button>
+
+        <div
+          className="phone-tilt"
+          aria-label="Control táctil"
+          role="application"
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            setTouchActive(true);
+            sendTouchMotion(event);
+          }}
+          onPointerMove={(event) => {
+            if (touchActive) {
+              sendTouchMotion(event);
+            }
+          }}
+          onPointerUp={resetTouchMotion}
+          onPointerCancel={resetTouchMotion}
+        >
+          <div
+            style={{
+              transform: `rotateX(${clamp(motion.beta, -55, 55)}deg) rotateY(${clamp(
+                motion.gamma,
+                -55,
+                55
+              )}deg) rotateZ(${clamp(motion.alpha / 8, -24, 24)}deg)`,
+            }}
+          >
+            <MonitorSmartphone size={96} strokeWidth={1.4} />
+          </div>
+          <span className="touch-dot" style={{ left: `${50 + motion.gamma / 1.8}%`, top: `${50 - motion.beta / 2.2}%` }} />
+        </div>
+
+        <div className="status-grid">
+          <Status label="Modo" value={controlMode} />
+          <Status label="Permiso" value={permission} />
+          <Status label="WebSocket" value={status} />
+          <Status label="Contexto" value={window.isSecureContext ? "seguro" : "http local"} />
+          <Status label="Orientation API" value={sensorSupport.orientation} />
+          <Status label="Motion API" value={sensorSupport.motion} />
+          <Status label="Accelerometer" value={sensorSupport.accelerometer} />
+          <Status label="Gyroscope" value={sensorSupport.gyroscope} />
+          <Status label="Fuente" value={sensorSource} />
+          <Status label="Eventos" value={eventCount} />
+          <Status label="Último sensor" value={lastSensorAt ? lastSensorAt.toLocaleTimeString() : "sin señal"} />
+          <Status label="Beta" value={motion.beta.toFixed(1)} />
+          <Status label="Gamma" value={motion.gamma.toFixed(1)} />
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function App() {
+  const controllerMatch = window.location.pathname.match(/^\/controller\/([A-Za-z0-9_-]+)/);
+  if (controllerMatch) {
+    return <ControllerApp room={controllerMatch[1]} />;
+  }
+
+  return <DesktopApp />;
+}
+
+createRoot(document.getElementById("root")).render(<App />);
