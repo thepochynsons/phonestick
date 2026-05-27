@@ -1,8 +1,8 @@
 import React, { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Canvas, useFrame, useLoader } from "@react-three/fiber";
-import { ContactShadows, Environment, Grid, OrbitControls, Text } from "@react-three/drei";
-import { Activity, Crosshair, FlipHorizontal, Gamepad2, MonitorSmartphone, RotateCcw, RotateCw, Smartphone } from "lucide-react";
+import { ContactShadows, Environment, Grid, OrbitControls } from "@react-three/drei";
+import { Activity, Crosshair, Gamepad2, MonitorSmartphone, RotateCcw, Smartphone } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { Euler, Quaternion } from "three";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
@@ -15,10 +15,7 @@ const NEUTRAL_POSE = {
   position: { x: 0, y: 0, z: 0 },
 };
 const DEFAULT_MODEL_ALIGNMENT = { x: 0, y: 0, z: Math.PI };
-const MODEL_ALIGNMENT_STORAGE_KEY = "ultrasound-model-alignment";
 const DEVICE_SCREEN_CORRECTION = new Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
-const PITCH_DIRECTION = -1;
-const TRACK_DEVICE_TWIST = false;
 
 function websocketUrl(room) {
   return `${WS_SCHEME}://${API_HOST}/ws/joystick/${room}/`;
@@ -36,30 +33,9 @@ function degreesToRadians(value) {
   return (value * Math.PI) / 180;
 }
 
-function normalizeRadians(value) {
-  return ((((value % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
-}
-
 function angleDegrees(value) {
-  const degrees = Math.round((normalizeRadians(value) * 180) / Math.PI);
+  const degrees = Math.round((value * 180) / Math.PI);
   return degrees === -180 ? 180 : degrees;
-}
-
-function loadModelAlignment() {
-  try {
-    const value = window.localStorage.getItem(MODEL_ALIGNMENT_STORAGE_KEY);
-    return value ? JSON.parse(value) : DEFAULT_MODEL_ALIGNMENT;
-  } catch (_error) {
-    return DEFAULT_MODEL_ALIGNMENT;
-  }
-}
-
-function saveModelAlignment(alignment) {
-  try {
-    window.localStorage.setItem(MODEL_ALIGNMENT_STORAGE_KEY, JSON.stringify(alignment));
-  } catch (_error) {
-    return;
-  }
 }
 
 function readMotion(message) {
@@ -69,24 +45,40 @@ function readMotion(message) {
     gamma: Number(message.gamma || 0),
   };
 
-  motion.quaternion = quaternionFromMotion(motion);
+  const quaternion = quaternionFromDeviceOrientation(motion);
+  motion.quaternion = {
+    x: quaternion.x,
+    y: quaternion.y,
+    z: quaternion.z,
+    w: quaternion.w,
+  };
+
   return motion;
 }
 
-function quaternionFromMotion(motion) {
-  const euler = new Euler(
-    degreesToRadians(motion.beta * PITCH_DIRECTION),
-    TRACK_DEVICE_TWIST ? degreesToRadians(motion.alpha) : 0,
-    -degreesToRadians(motion.gamma),
-    "YXZ"
-  );
-  return new Quaternion().setFromEuler(euler).multiply(DEVICE_SCREEN_CORRECTION).normalize();
+function quaternionFromDeviceOrientation(motion) {
+  return new Quaternion()
+    .setFromEuler(
+      new Euler(
+        degreesToRadians(motion.beta),
+        degreesToRadians(motion.alpha),
+        -degreesToRadians(motion.gamma),
+        "YXZ"
+      )
+    )
+    .multiply(DEVICE_SCREEN_CORRECTION)
+    .normalize();
 }
 
 function poseFromCalibratedMotion(motion, calibration) {
-  const current = motion.quaternion;
-  const origin = calibration.quaternion;
-  const relative = origin.clone().invert().multiply(current).normalize();
+  const current = new Quaternion(motion.quaternion.x, motion.quaternion.y, motion.quaternion.z, motion.quaternion.w);
+  const origin = new Quaternion(
+    calibration.quaternion.x,
+    calibration.quaternion.y,
+    calibration.quaternion.z,
+    calibration.quaternion.w
+  );
+  const relative = current.multiply(origin.invert()).normalize();
 
   return {
     quaternion: {
@@ -206,44 +198,6 @@ function Probe({ pose, hasStl, modelAlignment }) {
   );
 }
 
-function FloorLabel({ children, color, position }) {
-  return (
-    <Text
-      color={color}
-      fontSize={0.16}
-      fontWeight={800}
-      letterSpacing={0}
-      position={position}
-      rotation={[-Math.PI / 2, 0, 0]}
-      textAlign="center"
-    >
-      {children}
-    </Text>
-  );
-}
-
-function ReferenceArrow({ color, direction, label, labelPosition }) {
-  const rotation = direction === "front" ? [Math.PI / 2, 0, 0] : [0, 0, Math.PI / 2];
-  const shaftPosition = direction === "front" ? [0, -1.01, 1.55] : [-1.55, -1.01, 0];
-  const headPosition = direction === "front" ? [0, -1.01, 2.28] : [-2.28, -1.01, 0];
-
-  return (
-    <group>
-      <mesh position={shaftPosition} rotation={rotation}>
-        <cylinderGeometry args={[0.025, 0.025, 1.35, 24]} />
-        <meshStandardMaterial color={color} roughness={0.35} />
-      </mesh>
-      <mesh position={headPosition} rotation={rotation}>
-        <coneGeometry args={[0.11, 0.32, 28]} />
-        <meshStandardMaterial color={color} roughness={0.3} />
-      </mesh>
-      <FloorLabel color={color} position={labelPosition}>
-        {label}
-      </FloorLabel>
-    </group>
-  );
-}
-
 function ReferenceAnchors() {
   return (
     <group>
@@ -255,11 +209,10 @@ function ReferenceAnchors() {
         <ringGeometry args={[0.13, 0.18, 40]} />
         <meshStandardMaterial color="#193438" roughness={0.45} />
       </mesh>
-      <ReferenceArrow color="#0c8f6f" direction="front" label="FRENTE" labelPosition={[0, -0.99, 2.72]} />
-      <ReferenceArrow color="#2563eb" direction="left" label="BOTON IZQ" labelPosition={[-2.82, -0.99, 0]} />
-      <FloorLabel color="#193438" position={[0, -0.99, -0.96]}>
-        PUNTO FIJO
-      </FloorLabel>
+      <mesh position={[1.28, -0.99, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[0.13, 36]} />
+        <meshStandardMaterial color="#2563eb" roughness={0.35} />
+      </mesh>
     </group>
   );
 }
@@ -287,7 +240,7 @@ function DesktopApp() {
   const [latestMotion, setLatestMotion] = useState(null);
   const [calibration, setCalibration] = useState(null);
   const [calibratedAt, setCalibratedAt] = useState(null);
-  const [modelAlignment, setModelAlignment] = useState(loadModelAlignment);
+  const [modelAlignment] = useState(DEFAULT_MODEL_ALIGNMENT);
   const [hasStl, setHasStl] = useState(false);
   const phoneUrl = `${window.location.origin}/controller/${room}`;
 
@@ -328,22 +281,6 @@ function DesktopApp() {
     setLastMotionAt(null);
     setPose(NEUTRAL_POSE);
   };
-  const updateModelAlignment = (changes) => {
-    setModelAlignment((current) => {
-      const next = {
-        x: normalizeRadians(current.x + (changes.x || 0)),
-        y: normalizeRadians(current.y + (changes.y || 0)),
-        z: normalizeRadians(current.z + (changes.z || 0)),
-      };
-      saveModelAlignment(next);
-      return next;
-    });
-  };
-  const resetModelAlignment = () => {
-    setModelAlignment(DEFAULT_MODEL_ALIGNMENT);
-    saveModelAlignment(DEFAULT_MODEL_ALIGNMENT);
-  };
-
   return (
     <main className="shell">
       <section className="viewer">
@@ -371,48 +308,11 @@ function DesktopApp() {
           <Status label="WebSocket" value={status} />
           <Status label="Modelo" value={hasStl ? "STL" : "procedural"} />
           <Status label="Calibración" value={calibration ? "calibrado" : "pendiente"} />
-          <Status label="Movimiento" value="pitch/roll" />
-          <Status label="Frente" value="flecha verde" />
-          <Status label="Botón" value="flecha azul" />
+          <Status label="Movimiento" value="orientación completa" />
           <Status label="Alineación" value={`Z ${angleDegrees(modelAlignment.z)}°`} />
           <Status label="Último dato" value={lastMotionAt ? lastMotionAt.toLocaleTimeString() : "sin señal"} />
           <Status label="Referencia" value={calibratedAt ? calibratedAt.toLocaleTimeString() : "sin calibrar"} />
         </div>
-
-        <div className="button-row">
-          <button
-            aria-label="Girar modelo a la izquierda"
-            className="square-button"
-            title="Girar modelo a la izquierda"
-            type="button"
-            onClick={() => updateModelAlignment({ z: -Math.PI / 2 })}
-          >
-            <RotateCcw size={18} />
-          </button>
-          <button
-            aria-label="Girar modelo a la derecha"
-            className="square-button"
-            title="Girar modelo a la derecha"
-            type="button"
-            onClick={() => updateModelAlignment({ z: Math.PI / 2 })}
-          >
-            <RotateCw size={18} />
-          </button>
-          <button
-            aria-label="Invertir frente del modelo"
-            className="square-button"
-            title="Invertir frente del modelo"
-            type="button"
-            onClick={() => updateModelAlignment({ y: Math.PI })}
-          >
-            <FlipHorizontal size={18} />
-          </button>
-        </div>
-
-        <button className="icon-button secondary" type="button" onClick={resetModelAlignment}>
-          <Crosshair size={18} />
-          Alineación base
-        </button>
 
         <button className="icon-button" type="button" onClick={calibrate} disabled={!latestMotion}>
           <Crosshair size={18} />

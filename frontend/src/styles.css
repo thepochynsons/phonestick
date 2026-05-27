@@ -121,8 +121,7 @@ button {
 }
 
 .icon-button,
-.primary-action,
-.square-button {
+.primary-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -137,22 +136,8 @@ button {
 }
 
 .icon-button:hover,
-.primary-action:hover,
-.square-button:hover {
+.primary-action:hover {
   background: #066b75;
-}
-
-.button-row {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-}
-
-.square-button {
-  width: 100%;
-  aspect-ratio: 1;
-  min-height: 44px;
-  padding: 0;
 }
 
 .icon-button.secondary {
@@ -166,8 +151,7 @@ button {
 }
 
 .icon-button:disabled,
-.primary-action:disabled,
-.square-button:disabled {
+.primary-action:disabled {
   border-color: #c9d4d7;
   background: #dfe8ea;
   color: #7a8a8e;
