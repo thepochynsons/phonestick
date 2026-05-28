@@ -2,7 +2,7 @@ import React, { Suspense, useCallback, useEffect, useRef, useState } from "react
 import { createRoot } from "react-dom/client";
 import { Canvas, useFrame, useLoader } from "@react-three/fiber";
 import { ContactShadows, Environment, Grid, OrbitControls } from "@react-three/drei";
-import { Activity, Crosshair, Gamepad2, MonitorSmartphone, RotateCcw, Smartphone } from "lucide-react";
+import { Activity, Crosshair, Gamepad2, RotateCcw } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { Euler, Quaternion } from "three";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
@@ -31,11 +31,6 @@ function clamp(value, min, max) {
 
 function degreesToRadians(value) {
   return (value * Math.PI) / 180;
-}
-
-function angleDegrees(value) {
-  const degrees = Math.round((value * 180) / Math.PI);
-  return degrees === -180 ? 180 : degrees;
 }
 
 function readMotion(message) {
@@ -309,9 +304,11 @@ function DesktopApp() {
           <Status label="Modelo" value={hasStl ? "STL" : "procedural"} />
           <Status label="Calibración" value={calibration ? "calibrado" : "pendiente"} />
           <Status label="Movimiento" value="orientación completa" />
-          <Status label="Alineación" value={`Z ${angleDegrees(modelAlignment.z)}°`} />
           <Status label="Último dato" value={lastMotionAt ? lastMotionAt.toLocaleTimeString() : "sin señal"} />
           <Status label="Referencia" value={calibratedAt ? calibratedAt.toLocaleTimeString() : "sin calibrar"} />
+          <Status label="Alpha" value={latestMotion ? latestMotion.alpha.toFixed(1) : "0.0"} />
+          <Status label="Beta" value={latestMotion ? latestMotion.beta.toFixed(1) : "0.0"} />
+          <Status label="Gamma" value={latestMotion ? latestMotion.gamma.toFixed(1) : "0.0"} />
         </div>
 
         <button className="icon-button" type="button" onClick={calibrate} disabled={!latestMotion}>
@@ -340,27 +337,18 @@ function Status({ label, value }) {
 function ControllerApp({ room }) {
   const [permission, setPermission] = useState("idle");
   const [motion, setMotion] = useState({ beta: 0, gamma: 0, alpha: 0 });
-  const [controlMode, setControlMode] = useState("sensor");
-  const [sensorSource, setSensorSource] = useState("sin eventos");
   const [sensorSupport, setSensorSupport] = useState({
-    orientation: "checking",
-    motion: "checking",
     accelerometer: "checking",
     gyroscope: "checking",
   });
-  const [eventCount, setEventCount] = useState(0);
-  const [lastSensorAt, setLastSensorAt] = useState(null);
-  const [touchActive, setTouchActive] = useState(false);
   const eventCountRef = useRef(0);
   const hasOrientationRef = useRef(false);
-  const { status, send } = useJoystickSocket(room, () => {});
+  const { send } = useJoystickSocket(room, () => {});
 
   useEffect(() => {
     Promise.all([readPermission("accelerometer"), readPermission("gyroscope")]).then(
       ([accelerometer, gyroscope]) => {
         setSensorSupport({
-          orientation: typeof DeviceOrientationEvent === "undefined" ? "no" : "si",
-          motion: typeof DeviceMotionEvent === "undefined" ? "no" : "si",
           accelerometer,
           gyroscope,
         });
@@ -371,8 +359,6 @@ function ControllerApp({ room }) {
   const start = async () => {
     eventCountRef.current = 0;
     hasOrientationRef.current = false;
-    setEventCount(0);
-    setSensorSource("sin eventos");
 
     if (
       typeof DeviceOrientationEvent !== "undefined" &&
@@ -393,45 +379,10 @@ function ControllerApp({ room }) {
     }, 1800);
   };
 
-  const sendSensorMotion = (next, source) => {
-    setControlMode("sensor");
-    setSensorSource(source);
+  const sendSensorMotion = (next) => {
     setMotion(next);
     eventCountRef.current += 1;
-    setEventCount(eventCountRef.current);
-    setLastSensorAt(new Date());
     setPermission("active");
-    send(next);
-  };
-
-  const sendTouchMotion = (event) => {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const x = clamp((event.clientX - bounds.left) / bounds.width, 0, 1);
-    const y = clamp((event.clientY - bounds.top) / bounds.height, 0, 1);
-    const gamma = (x - 0.5) * 90;
-    const beta = (0.5 - y) * 110;
-    const next = {
-      type: "motion",
-      alpha: 0,
-      beta,
-      gamma,
-    };
-
-    setControlMode("touch");
-    setMotion(next);
-    setLastSensorAt(new Date());
-    send(next);
-  };
-
-  const resetTouchMotion = () => {
-    setTouchActive(false);
-    const next = {
-      type: "motion",
-      alpha: 0,
-      beta: 0,
-      gamma: 0,
-    };
-    setMotion(next);
     send(next);
   };
 
@@ -446,7 +397,7 @@ function ControllerApp({ room }) {
         gamma: event.gamma || 0,
       };
       hasOrientationRef.current = true;
-      sendSensorMotion(next, "orientation");
+      sendSensorMotion(next);
     };
     const handleMotion = (event) => {
       if (hasOrientationRef.current) return;
@@ -466,8 +417,7 @@ function ControllerApp({ room }) {
             alpha: motion.alpha || 0,
             beta,
             gamma,
-          },
-          "motion"
+          }
         );
       }
     };
@@ -484,64 +434,15 @@ function ControllerApp({ room }) {
   return (
     <main className="controller">
       <section className="controller-card">
-        <div className="brand controller-brand">
-          <Smartphone size={24} />
-          <div>
-            <h1>Joystick</h1>
-            <p>Sala {room}</p>
-          </div>
-        </div>
-
         <button className="primary-action" type="button" onClick={start}>
           <Gamepad2 size={20} />
           Activar sensores
         </button>
 
-        <div
-          className="phone-tilt"
-          aria-label="Control táctil"
-          role="application"
-          onPointerDown={(event) => {
-            event.currentTarget.setPointerCapture(event.pointerId);
-            setTouchActive(true);
-            sendTouchMotion(event);
-          }}
-          onPointerMove={(event) => {
-            if (touchActive) {
-              sendTouchMotion(event);
-            }
-          }}
-          onPointerUp={resetTouchMotion}
-          onPointerCancel={resetTouchMotion}
-        >
-          <div
-            style={{
-              transform: `rotateX(${clamp(motion.beta, -55, 55)}deg) rotateY(${clamp(
-                motion.gamma,
-                -55,
-                55
-              )}deg) rotateZ(${clamp(motion.alpha / 8, -24, 24)}deg)`,
-            }}
-          >
-            <MonitorSmartphone size={96} strokeWidth={1.4} />
-          </div>
-          <span className="touch-dot" style={{ left: `${50 + motion.gamma / 1.8}%`, top: `${50 - motion.beta / 2.2}%` }} />
-        </div>
-
         <div className="status-grid">
-          <Status label="Modo" value={controlMode} />
           <Status label="Permiso" value={permission} />
-          <Status label="WebSocket" value={status} />
-          <Status label="Contexto" value={window.isSecureContext ? "seguro" : "http local"} />
-          <Status label="Orientation API" value={sensorSupport.orientation} />
-          <Status label="Motion API" value={sensorSupport.motion} />
           <Status label="Accelerometer" value={sensorSupport.accelerometer} />
           <Status label="Gyroscope" value={sensorSupport.gyroscope} />
-          <Status label="Fuente" value={sensorSource} />
-          <Status label="Eventos" value={eventCount} />
-          <Status label="Último sensor" value={lastSensorAt ? lastSensorAt.toLocaleTimeString() : "sin señal"} />
-          <Status label="Beta" value={motion.beta.toFixed(1)} />
-          <Status label="Gamma" value={motion.gamma.toFixed(1)} />
         </div>
       </section>
     </main>
