@@ -180,7 +180,7 @@ Importante: si abres la pantalla principal en la computadora como `http://localh
 
 Si el celular carga la pantalla pero no conecta el WebSocket, verifica que el firewall permita los puertos `5173` y `8000`.
 
-6. Calibracion inicial
+6. Calibracion inicial (https://drive.google.com/file/d/1uaTOJ9MOxWtIrPJklcbxxLikdjKTohl3/view?usp=sharing)
 
 La postura base es:
 - Transductor: tal como carga la malla, boca arriba y con el boton a la derecha.
